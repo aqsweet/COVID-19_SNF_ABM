@@ -64,7 +64,16 @@ load("Inputs/Functions/ABM_Function.RData")
 
 ABM_SNFdynamics_func <- function(
     
-   # Version 3.04 Changelog====
+ABM_SNFdynamics_func <- function(
+    
+  # Version 3.05 Changelog====
+  #* 7/26/24
+  #* Tweaks to transmission model for SNF and hospital 
+  #* Updated how policies are implemented
+  
+  
+  
+  # Version 3.04 Changelog====
    #* 2/9/24
 # Bug Fixes and Tweaks      
       #* Made some tweaks on frequency of moving to SNF
@@ -115,11 +124,11 @@ ABM_SNFdynamics_func <- function(
   hospital_data = copy(hospitals),
   SNF_hospital_preference = copy(hospital_preference_frame),
   Comm_hospital_preference = copy(hospital_preference_frame_comm),
-  policy = copy(policy),
   verbose = 0,
   iter = copy(iter),
-  mandatory_sickDays = TRUE, #is it mandatory to take sick leave when 
-  #symptomatic?
+  mandatory_sickDays = TRUE, #is it mandatory to take sick leave when symptomatic?
+  vaccination_policy = 0, 
+  pto_rate = 2,
   ##Initial State Initialization====
   
   ###SIRV States====
@@ -157,7 +166,7 @@ ABM_SNFdynamics_func <- function(
   #proportion of vaccination in SNF residents [start in V state]
 
   clearance_time_lambda = 12, #lambda for determining the length of infection
-  community_infection_rate = (71/100000)*5, #community infection rate; 
+  community_infection_prevalence = (71/100000)*5, #community infection rate; 
   #based on reported infection rates in the St. Louis area
 
 
@@ -203,10 +212,15 @@ ABM_SNFdynamics_func <- function(
   #contact with in a typical day
   worker_contacts = 4.28, #Number of staff/workers (i.e. nurses) a resident has
   #contact with in a typical day
+  other_contacts = 4.59, #Number of non-nurse/non-resident contacts
+  ratio_other_contacts = 2.89,
   patient_contacts = 6, #Number of other patients a hospital patient has direct
   #contact with in a typical day
   hosp_worker_contacts = 6,
   asymptomatic_rate = 0.4632, 
+  transmission_prob = 0.14,
+  asympto_incubation = 5.47,
+  sympto_incubation = 2.63,
   #https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2787098
   
   ##Worker Parameterization ----
@@ -241,19 +255,16 @@ ABM_SNFdynamics_func <- function(
   #individual worker can concurrently work
   n_hours_per_facility_SNF = c(single = 40, multiple_2 = 25, multiple_3 = 20), 
   #number of hours worked per facility based on how many facilities one works at
-  pay_scale_rates = c(high = 0.7, median = 0.1, low = 0.2), #pay scale rates for 
-  #each policy level (2, 1, and 0 respectively)
   PTO_rates = c(high = 0.6, median = 0.1, low = 0.3), #PTO rates for each policy 
   #level (2, 1, and 0 respectively)
-  vaccination_policy_rates = c(no_policy = 0.3, policy = 0.7), #vaccination 
+  vaccination_policy_rates = c(no_policy = 0.3, policy = 0.9), #vaccination 
   #rates among staff by policy (0 and 1 respectively)
   
   initial_PTO_distribution_lambda = 1, #lambda used to determine 
   #initial PTO distribution
   PTO_accrual_rate_per_timestep = 0.57, #PTO Accrual
-  pay = unname(policy[,1]), #The pay scale policy for this simulation [0,1,2]
-  pto = unname(policy[,2]), #The PTO policy for this simulation [0,1,2]
-  vax = unname(policy[,3]), #vaccination policy for this simulation [0,1]
+  pto = pto_rate, #The PTO policy for this simulation [0,1,2]
+  vax = vaccination_policy, #vaccination policy for this simulation [0,1]
   
   ##Vaccination Parameters =====
   
@@ -306,7 +317,7 @@ ABM_SNFdynamics_func <- function(
     
 ){
   # Open a connection to a file
-  # sink(paste0("Outputs/29",county,"/policy_",pay,pto,vax,"_Sick_Leave_",mandatory_sickDays,"/","Output_",iter,".txt"))
+  sink(paste0("output.txt"))
   
 
 
@@ -318,7 +329,7 @@ ABM_SNFdynamics_func <- function(
   
   # Body of Function Begins ====
   action_sub_model_vector <- c("die_people", "upkeep_staff_counts", 
-                               "contract_infection_host", "go_to_hospital", 
+                               "Transmission", "go_to_hospital", 
                                "leave_hospital", "recover_from_illness", 
                                "retire", "move_to_SNF", "get_vaccinated", 
                                "leave_SNF")#for record-keeping purposes we'll 
@@ -412,13 +423,12 @@ ABM_SNFdynamics_func <- function(
   hospital_data[, `:=` (
     num_patients = NA_integer_,
     num_I_patients = NA_integer_,
-    per_cont_pat = NA_real_,
-    per_cont_work = NA_real_,
-    per_inf_pat = NA_real_,
-    per_inf_work = NA_real_,
+    p_pat = NA_real_,
+    p_work = NA_real_,
+    p_other = NA_real_,
     total_inf_chance = NA_real_
   )]
-  
+
   if(hospital_workers == TRUE){ #we check that hospital workers need to assigned
     
     work_assignments_hospital <- hospital_worker_assignment_func(x = community_pop, y = hospital_data, min_age_worker = minimum_age_worker, min_age_physician = minimum_age_physician) #produces hospital worker and physician assignments
@@ -445,21 +455,20 @@ ABM_SNFdynamics_func <- function(
   
   SNF_data[, `:=` (
     num_patients = NA_integer_,
-    num_I_patients = NA_integer_,
-    per_cont_pat = NA_real_,
-    per_cont_work = NA_real_,
-    per_inf_pat = NA_real_,
-    per_inf_work = NA_real_,
+    num_I_residents = NA_integer_,
+    p_res = NA_real_,
+    p_work = NA_real_,
+    p_other = NA_real_,
     total_inf_chance = NA_real_)]
   
   
   #First we determine the salary, PTO, and vaccination policies for each snf
   
-  SNF_data[, payscale := NA_integer_]
+
   SNF_data[, PTO_rate := NA_integer_]
   SNF_data[, vaccine_policy := NA_integer_]
   
-  SNF_data[, payscale := pay]
+
   SNF_data[, PTO_rate := pto]
   SNF_data[, vaccine_policy := vax]
   
@@ -772,7 +781,7 @@ ABM_SNFdynamics_func <- function(
     #Compilation of Random-Order Sub-Models====
     #1) die_people - kill individuals and remove them from the population
     #-2) upkeep_staff_counts - We want the hospital and SNF staff count to remain fixed throughout the simulation. So, if a staff member dies, then we need to replace them.
-    #-3) contract_infection_host - Some people get infected.
+    #-3) Transmission - Some people get infected.
     #-4) go_to_hospital - Some people move to the "H" state (or "A" if all hospitals are full).
     #-5) recover_from_illness - People will spontaneously clear the infection, and may have an elevated probability of doing so when hospitalized.
     #-6) leave_hospital - People leave the hospital after hitting their required number of days.
@@ -1097,16 +1106,16 @@ ABM_SNFdynamics_func <- function(
 
       
       
-      #3 Sub-Model contract infection host====
+      #3 Sub-Model Transmission====
       #      
       
-      if(sub_m == "contract_infection_host"){  
+      if(sub_m == "Transmission"){  
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning"))}
         
         alive_table[, `:=` (infection_probability = 0, infected_this_timestep = NA)] #reset infection related state variables
         infected_hosts <- alive_table[state_SIRV == "I", ] #pull individuals infected with the pathogen
         
-        infectious_hosts <- infected_hosts[time_in_state_SIRV >= 5, ] #removes individuals in the latency period
+        infectious_hosts <- infected_hosts[(symptoms == "Y" & time_in_state_SIRV >= sympto_incubation)|(symptoms == "N" & time_in_state_SIRV >= asympto_incubation) , ] #removes individuals in the latency period
         
         comm <- alive_table[population == "community" & (state_PAH == "A" | state_PAH == "P"), which = TRUE] #total community not in the hospital
         num_comm <- length(comm)
@@ -1114,18 +1123,18 @@ ABM_SNFdynamics_func <- function(
         
         if(verbose == 2){print(paste0("hospital infection probability function beginning"))}
         # Compute infection probabilities for each hospital
-        result <- calculate_hospital_infection_probability(hospital_data, alive_table, infectious_hosts, patient_contacts, hosp_worker_contacts, community_infection_rate, mandatory_sickDays)
+        result <- calculate_hospital_infection_probability(hospital_data, alive_table, infectious_hosts, patient_contacts, hosp_worker_contacts, community_infection_prevalence, mandatory_sickDays, transmission_prob, other_contacts, ratio_other_contacts)
         hospital_data <- result[[1]]
         alive_table <- result[[2]]
         if(verbose == 2){print(paste0("hospital infection probability function finished/ SNF function beginning"))}
         # Compute infection probabilities for each SNF
-        result <- calculate_snf_infection_probability(SNF_data, alive_table, infectious_hosts, resident_contacts, worker_contacts, community_infection_rate, mandatory_sickDays)
+        result <- calculate_snf_infection_probability(SNF_data, alive_table, infectious_hosts, resident_contacts, worker_contacts, community_infection_prevalence, mandatory_sickDays, transmission_prob, other_contacts, ratio_other_contacts)
         SNF_data <- result[[1]]
         alive_table <- result[[2]]
         if(verbose == 2){print(paste0("SNF infection probability function finished"))}
         #next we find the infection probability for community members based on the community infection rate (endemic levels of transmission)
         
-        infected_comm <- sample(alive_table[comm][state_SIRV != "I", which = TRUE], num_comm * community_infection_rate)
+        infected_comm <- sample(alive_table[comm][state_SIRV != "I", which = TRUE], num_comm * community_infection_prevalence)
         alive_table[infected_comm, infection_probability := 1]
         
         #modify based on immunity 
@@ -1162,7 +1171,7 @@ ABM_SNFdynamics_func <- function(
         }
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}    
         
-      } # end sub_m == "contract_infection_host"
+      } # end sub_m == "Transmission"
       
       #4 Sub-Model go to hospital====
       
@@ -1237,7 +1246,7 @@ ABM_SNFdynamics_func <- function(
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
-        recovering_this_timestep <- alive_table[state_SIRV == "I" & time_in_state_SIRV >= host_clearance_time, which = TRUE] #find individuals who have been infected for their full clearance time [see contract infection submodel for how host clearance time is assigned]
+        recovering_this_timestep <- alive_table[state_SIRV == "I" & time_in_state_SIRV >= host_clearance_time, which = TRUE] #find individuals who have been infected for their full clearance time [see Transmission submodel for how host clearance time is assigned]
         
         alive_table[recovering_this_timestep, `:=` (state_SIRV = "R", symptoms = "0", state_change_SIRV = "R", time_in_state_SIRV = 0, infection_time = NA, host_clearance_time = NA)] #Update to recovered state
         
@@ -1421,7 +1430,6 @@ return(list(alive_table = alive_table, dead_table = dead_table, SNF_data = SNF_d
 # sink(type = "output")
 
 } #end of function
-
 
 
 
