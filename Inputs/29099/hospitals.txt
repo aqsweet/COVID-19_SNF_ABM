@@ -1,0 +1,2 @@
+hosp_id	workers	physicians	beds	latitude	longitude
+H052	826	30	266	38.23473	-90.39208
