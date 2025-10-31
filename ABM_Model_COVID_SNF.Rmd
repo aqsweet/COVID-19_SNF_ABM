@@ -328,11 +328,11 @@ ABM_SNFdynamics_func <- function(
   }
   
   # Body of Function Begins ====
-  action_sub_model_vector <- c("die_people", "upkeep_staff_counts", 
-                               "Transmission", "go_to_hospital", 
-                               "leave_hospital", "recover_from_illness", 
-                               "retire", "move_to_SNF", "get_vaccinated", 
-                               "leave_SNF")#for record-keeping purposes we'll 
+  action_sub_model_vector <- c("death", "upkeep_staff_counts", 
+                               "Transmission", "hospital_admission", 
+                               "hospital_discharge", "recovery", 
+                               "retire", "SNF_admission", "vaccination", 
+                               "SNF_discharge")#for record-keeping purposes we'll 
   #put a vector of sub_model names here in no particular order. 
   #NOTE: IF ANY ADDITIONAL ACTION SUB-MODELS ARE ADDED TO LATER ITERATIONS OF 
   #THIS MODEL DON'T FORGET TO ADD THEM TO THIS VECTOR.
@@ -483,15 +483,15 @@ ABM_SNFdynamics_func <- function(
   #Add columns to update with each iteration ====
   
   SNF_data[ , persons := nresid] #facilities begin with the number of residents reported in the data
-  SNF_pop[ , `:=` (died = NA_integer_, birthday = (sample(1:365, nrow(SNF_pop), replace = TRUE)), time_in_state_SIRV = 0, time_in_state_PAH = 0)] #create columns in SNF_pop
-  community_pop[ , `:=` (died = NA_integer_, birthday = sample(1:365, nrow(community_pop), replace = TRUE), time_in_state_SIRV = 0, time_in_state_PAH = 0, PTO_1 = as.numeric(rpois(n = nrow(community_pop), lambda = initial_PTO_distribution_lambda)), PTO_2 = 0, PTO_3 = 0, retired = 0, replaced = 0)] #create columns in community_pop
+  SNF_pop[ , `:=` (died = NA_integer_, birthday = (sample(1:365, nrow(SNF_pop), replace = TRUE)), time_in_state_SIRV = 0, time_in_state_RAH = 0)] #create columns in SNF_pop
+  community_pop[ , `:=` (died = NA_integer_, birthday = sample(1:365, nrow(community_pop), replace = TRUE), time_in_state_SIRV = 0, time_in_state_RAH = 0, PTO_1 = as.numeric(rpois(n = nrow(community_pop), lambda = initial_PTO_distribution_lambda)), PTO_2 = 0, PTO_3 = 0, retired = 0, replaced = 0)] #create columns in community_pop
   community_pop[ altered_work_id == 1, `:=` (retired = NA_integer_, replaced = NA_integer_)] #change value of retired and replaced for individuals we will need to replace once retired
   
   #bind the two population tables together
   total_population <- rbind(SNF_pop, community_pop, fill = TRUE)
   total_population[ ,dwelling_id := as.character(home_id)]
   total_population[sp_snf_id > 0 ,dwelling_id := as.character(sp_snf_id)]
-  total_population[ , `:=` (current_location_id = dwelling_id, population = c(rep("SNF", nrow(SNF_pop)), rep("community", nrow(community_pop))), state_SIRV = "S", symptoms = "0",  state_PAH = "P", H_id = NA_character_, length_hospital_stay = NA_integer_, state_change_SIRV = as.character(0), state_change_PAH = as.character(0), n_times_infected = 0, host_clearance_time = NA_integer_, infection_time = NA_integer_, n_doses_vaccine = 0, time_of_last_vaccine = NA_integer_, prevalence_threshold_to_vaccinate = rbeta(.N, shape1 = unname(prevalence_threshold_to_vaccinate_beta_distribution_parameters[1]), shape2 = unname(prevalence_threshold_to_vaccinate_beta_distribution_parameters[2]))*prevalence_threshold_multiplier_population)]
+  total_population[ , `:=` (current_location_id = dwelling_id, population = c(rep("SNF", nrow(SNF_pop)), rep("community", nrow(community_pop))), state_SIRV = "S", symptoms = "0",  state_RAH = "R", H_id = NA_character_, length_hospital_stay = NA_integer_, state_change_SIRV = as.character(0), state_change_RAH = as.character(0), n_times_infected = 0, host_clearance_time = NA_integer_, infection_time = NA_integer_, n_doses_vaccine = 0, time_of_last_vaccine = NA_integer_, prevalence_threshold_to_vaccinate = rbeta(.N, shape1 = unname(prevalence_threshold_to_vaccinate_beta_distribution_parameters[1]), shape2 = unname(prevalence_threshold_to_vaccinate_beta_distribution_parameters[2]))*prevalence_threshold_multiplier_population)]
   total_population[work_id_updated_position == "hospital_worker" | work_id_updated_position == "hospital_physician", prevalence_threshold_to_vaccinate := prevalence_threshold_to_vaccinate * prevalence_threshold_multiplier_hospital_staff]
   for(i in total_population[work_id_updated_position == "SNF_worker", sp_id]){
     SNF_1 <- total_population[sp_id == i,work_id_final_1]
@@ -545,13 +545,13 @@ ABM_SNFdynamics_func <- function(
   
   H_Assigned <- sample(1:pop_size, beds_total, replace = FALSE)
   
-  total_population[H_Assigned, state_change_PAH := "H"]
+  total_population[H_Assigned, state_change_RAH := "H"]
   
-  H_transition_vec <- total_population[state_change_PAH == "H", which = TRUE]
+  H_transition_vec <- total_population[state_change_RAH == "H", which = TRUE]
   
   total_population[H_transition_vec, length_hospital_stay := rpois( n = length(H_transition_vec), lambda = days_hospitalized_lambda)]
   
-  SNF_H_transition_timestep_vec <- total_population[population == "SNF" & state_change_PAH == "H", which = TRUE]
+  SNF_H_transition_timestep_vec <- total_population[population == "SNF" & state_change_RAH == "H", which = TRUE]
   count_snf <- 0
   for(a in SNF_H_transition_timestep_vec){
     count_snf <- count_snf + 1
@@ -568,7 +568,7 @@ ABM_SNFdynamics_func <- function(
         if(is.na(beds_avail) == FALSE | beds_avail > 0){
           new_state <- paste("H", hosp_of_choice, sep = "_")
           
-          total_population[a, `:=` (state_PAH = new_state, H_id = hosp_of_choice, time_in_state_PAH = 0, current_location_id = hosp_of_choice)]
+          total_population[a, `:=` (state_RAH = new_state, H_id = hosp_of_choice, time_in_state_RAH = 0, current_location_id = hosp_of_choice)]
           new_beds = hospital_data[1 == hosp_of_choice, beds_available] - 1
           hospital_data[1 == hosp_of_choice, `:=` (beds_available = new_beds)]
           
@@ -587,7 +587,7 @@ ABM_SNFdynamics_func <- function(
   
   
   
-  Comm_H_transition_timestep_vec <- total_population[population == "community" & state_change_PAH == "H", which = TRUE]
+  Comm_H_transition_timestep_vec <- total_population[population == "community" & state_change_RAH == "H", which = TRUE]
   count_comm <- 0
   for (a in Comm_H_transition_timestep_vec) {
     count_comm <- count_comm + 1
@@ -606,14 +606,14 @@ ABM_SNFdynamics_func <- function(
           
           new_state <- "A" #this will be the individual's new state
           
-          total_population[a, `:=` (state_PAH = new_state, time_in_state_PAH = 0)]
+          total_population[a, `:=` (state_RAH = new_state, time_in_state_RAH = 0)]
           
           assigned_H <- 1
         }
         if(is.na(beds_avail) == FALSE | beds_avail > 0){
           new_state <- paste("H", hosp_of_choice, sep = "_")
           
-          total_population[a, `:=` (state_PAH = new_state, H_id = hosp_of_choice, time_in_state_PAH = 0, current_location_id = hosp_of_choice)]
+          total_population[a, `:=` (state_RAH = new_state, H_id = hosp_of_choice, time_in_state_RAH = 0, current_location_id = hosp_of_choice)]
           hospital_data[hosp_id == hosp_of_choice, beds_available := beds_available -1]
           
           assigned_H <- 1 #the individual has been assigned.
@@ -743,7 +743,7 @@ ABM_SNFdynamics_func <- function(
     #end of iteration
     
     #Update Time Steps and Time Related Variables ====
-    alive_table[ , `:=` (state_change_SIRV = 0, state_change_PAH = 0, time_in_state_SIRV = time_in_state_SIRV + 1, time_in_state_PAH = time_in_state_PAH + 1, infected_this_timestep = 0, time_of_last_vaccine = time_of_last_vaccine + 1)] #resets variables for the simulation, adds a day to time in each state, updates host clearance time
+    alive_table[ , `:=` (state_change_SIRV = 0, state_change_RAH = 0, time_in_state_SIRV = time_in_state_SIRV + 1, time_in_state_RAH = time_in_state_RAH + 1, infected_this_timestep = 0, time_of_last_vaccine = time_of_last_vaccine + 1)] #resets variables for the simulation, adds a day to time in each state, updates host clearance time
     alive_table[is.na(SNF_days) == FALSE, SNF_days := SNF_days + 1] #updates the number of SNF_days for those that will be discharged
     tick_time_date <- (tick + (start_date - 1)) - ((ceiling((tick + (start_date - 1))/365) - 1)*365) #Keep track of the date (for birthdays). This calculation keeps the date between 1 and 365 (As long as tick is > 0, anyway)
     #tick_time = (tick + (start_date - 1)) - (floor((tick + (start_date - 1))/365)*365) #this calculation keeps the time between 0 and 364
@@ -779,15 +779,15 @@ ABM_SNFdynamics_func <- function(
         n_vaccine_doses_available <- n_vaccine_doses_available + vaccine_dose_release_times_dates[[2]][vaccine_release_indices]
       }}
     #Compilation of Random-Order Sub-Models====
-    #1) die_people - kill individuals and remove them from the population
+    #1) death - kill individuals and remove them from the population
     #-2) upkeep_staff_counts - We want the hospital and SNF staff count to remain fixed throughout the simulation. So, if a staff member dies, then we need to replace them.
     #-3) Transmission - Some people get infected.
-    #-4) go_to_hospital - Some people move to the "H" state (or "A" if all hospitals are full).
-    #-5) recover_from_illness - People will spontaneously clear the infection, and may have an elevated probability of doing so when hospitalized.
-    #-6) leave_hospital - People leave the hospital after hitting their required number of days.
+    #-4) hospital_admission - Some people move to the "H" state (or "A" if all hospitals are full).
+    #-5) recovery - People will spontaneously clear the infection, and may have an elevated probability of doing so when hospitalized.
+    #-6) hospital_discharge - People leave the hospital after hitting their required number of days.
     #-7) retire - People have the opportunity to retire from their current workplace
-    #-8) move_to_SNF - People may move to an SNF.
-    #-9) get_vaccinated - People may seek a dose of vaccine.
+    #-8) SNF_admission - People may move to an SNF.
+    #-9) vaccination - People may seek a dose of vaccine.
     
     
     sub_model_vector_to_randomize <- action_sub_model_vector  #create a vector of all sub-models that we will step through in random order. Note that for the random-ordering to work properly, we must recreate this vector at every time step because it is reduced in the for-loop below.
@@ -804,10 +804,10 @@ ABM_SNFdynamics_func <- function(
         
       }
       
-      ##1 Sub-Model die_people====
+      ##1 Sub-Model death====
       #
       
-      if(sub_m == "die_people"){
+      if(sub_m == "death"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
@@ -819,7 +819,7 @@ ABM_SNFdynamics_func <- function(
         # Apply All Modifiers in a Single Line
         alive_table[, mortality_probability := baseline_mortality_lambda * exp(
           get_age_mod(age, mortality_AFT_hazard_betas) + 
-            get_state_mod(state_SIRV, state_PAH, mortality_AFT_hazard_betas) + 
+            get_state_mod(state_SIRV, state_RAH, mortality_AFT_hazard_betas) + 
             get_SDoH_mod(nSDoH, mortality_AFT_hazard_betas)
         )] #Assigns mortality probability for each individual in alive_table
         
@@ -837,7 +837,7 @@ ABM_SNFdynamics_func <- function(
           
           hospital_ids <- hospital_data[,hosp_id]
         
-        died_in_hospital_table <- alive_table[died_this_timestep == 1 & H_id %in% hospital_ids,] #pull the PAH state for individuals who died
+        died_in_hospital_table <- alive_table[died_this_timestep == 1 & H_id %in% hospital_ids,] #pull the RAH state for individuals who died
         died_in_hospital_table_id_match <- table(died_in_hospital_table[,H_id])
         
         
@@ -854,7 +854,7 @@ ABM_SNFdynamics_func <- function(
         dead_table <- rbind(dead_table,alive_table[died_this_timestep == 1, ], fill = TRUE)
         }
         
-      }  #end sub_m == "die_people"
+      }  #end sub_m == "death"
       #'
       #'
       #'
@@ -1117,7 +1117,7 @@ ABM_SNFdynamics_func <- function(
         
         infectious_hosts <- infected_hosts[(symptoms == "Y" & time_in_state_SIRV >= sympto_incubation)|(symptoms == "N" & time_in_state_SIRV >= asympto_incubation) , ] #removes individuals in the latency period
         
-        comm <- alive_table[population == "community" & (state_PAH == "A" | state_PAH == "P"), which = TRUE] #total community not in the hospital
+        comm <- alive_table[population == "community" & (state_RAH == "A" | state_RAH == "R"), which = TRUE] #total community not in the hospital
         num_comm <- length(comm)
         
         
@@ -1173,9 +1173,9 @@ ABM_SNFdynamics_func <- function(
         
       } # end sub_m == "Transmission"
       
-      #4 Sub-Model go to hospital====
+      #4 Sub-Model hospital_admission====
       
-      if(sub_m == "go_to_hospital"){
+      if(sub_m == "hospital_admission"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
@@ -1188,10 +1188,10 @@ ABM_SNFdynamics_func <- function(
                                                                                        get_SDoH_mod_hosp(nSDoH, hospitalization_AFT_hazard_betas)
         )] #Assigns hospitalization probability for each individual in alive_table
         
-        alive_table[state_PAH == "A", hospitalization_probability := 1] #makes sure hospitalization probability is 1 for those already in "A" state
+        alive_table[state_RAH == "A", hospitalization_probability := 1] #makes sure hospitalization probability is 1 for those already in "A" state
         
         #decide who will attempt to be hospitalized this time step
-        hospitalized_this_timestep<- alive_table[hospitalization_probability > runif(nrow(alive_table)) & state_change_PAH == 0, which = TRUE]
+        hospitalized_this_timestep<- alive_table[hospitalization_probability > runif(nrow(alive_table)) & state_change_RAH == 0, which = TRUE]
         
         if(sum(hospital_data[,beds_available]) > 0){
           
@@ -1204,9 +1204,9 @@ ABM_SNFdynamics_func <- function(
           hospital_data <- result$hospital_data
         }#This line calls the assign hospital function for each individual. hosp_id is then set to either the assigned hospital id or NA if no beds are available
         }
-        alive_table[hospitalized_this_timestep][is.na(H_id) & state_PAH != "A", `:=` (state_change_PAH = "A", state_PAH = "A", time_in_state_PAH = 0)] #updates PAH variables for those not assigned to hospitals (not already in A state)
+        alive_table[hospitalized_this_timestep][is.na(H_id) & state_RAH != "A", `:=` (state_change_RAH = "A", state_RAH = "A", time_in_state_RAH = 0)] #updates RAH variables for those not assigned to hospitals (not already in A state)
         
-        alive_table[!is.na(H_id), `:=` (state_change_PAH = "H", state_PAH = paste0("H_",H_id), current_location_id = H_id, time_in_state_PAH = 0)] #updates PAH variables for those assigned to hospitals
+        alive_table[!is.na(H_id), `:=` (state_change_RAH = "H", state_RAH = paste0("H_",H_id), current_location_id = H_id, time_in_state_RAH = 0)] #updates RAH variables for those assigned to hospitals
         
         hospital_data[, `:=` (beds_filled = alive_table[current_location_id == hosp_id, .N]), by = .(hosp_id)]
         
@@ -1216,20 +1216,20 @@ ABM_SNFdynamics_func <- function(
           print(paste0(alive_table[hospitalized_this_timestep][is.na(H_id), .N], " individuals moved to (or remain in) A state"))
           print(paste0(alive_table[hospitalized_this_timestep][!is.na(H_id), .N], " individuals moved to H state"))
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}  
-      } #end of assign hospital sub model
+      } #end of hospital_admission sub model
       
       
-      #5 Sub-Model leave hospital====
+      #5 Sub-Model hospital_discharge====
       # 
-      if(sub_m == "leave_hospital"){
+      if(sub_m == "hospital_discharge"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
         
-        leaving_hospital_this_timestep <- alive_table[grepl("H", state_PAH) & state_change_PAH == 0 & symptoms != "Y" & length_hospital_stay == time_in_state_PAH, which = TRUE] #we pull a list of individuals who have been in hospital for the predetermined stay length (and who are NOT symptomatic with COVID)
+        leaving_hospital_this_timestep <- alive_table[grepl("H", state_RAH) & state_change_RAH == 0 & symptoms != "Y" & length_hospital_stay == time_in_state_RAH, which = TRUE] #we pull a list of individuals who have been in hospital for the predetermined stay length (and who are NOT symptomatic with COVID)
         
         if(length(leaving_hospital_this_timestep) > 0){
-          alive_table[leaving_hospital_this_timestep, `:=` (state_PAH ="P", state_change_PAH = "P", H_id = NA, current_location_id = dwelling_id, time_in_state_PAH = 0, length_hospital_stay = NA)]#update individuals to move back to their normal community dwelling (SNF or home)
+          alive_table[leaving_hospital_this_timestep, `:=` (state_RAH ="R", state_change_RAH = "R", H_id = NA, current_location_id = dwelling_id, time_in_state_RAH = 0, length_hospital_stay = NA)]#update individuals to move back to their normal community dwelling (SNF or home)
           
           hospital_data[, `:=` (beds_filled = nrow(alive_table[H_id == hosp_id, ]), beds_available = beds - beds_filled),by = hosp_id] #update the beds_available field.
         }
@@ -1238,11 +1238,11 @@ ABM_SNFdynamics_func <- function(
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}
         
         
-      }# end sub_m == "leave_hospital"
+      }# end sub_m == "hospital_discharge"
       
-      #     #6 Sub-Model recover_from_illness====
+      #     #6 Sub-Model recovery====
       # 
-      if(sub_m == "recover_from_illness"){
+      if(sub_m == "recovery"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
@@ -1254,7 +1254,7 @@ ABM_SNFdynamics_func <- function(
           print(paste0(length(recovering_this_timestep), " people recovered this timestep"))
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}
         
-      }# end sub_m == "recover_from_illness"
+      }# end sub_m == "recovery"
       
       
       #7 Sub-Model retire====
@@ -1276,15 +1276,15 @@ ABM_SNFdynamics_func <- function(
       
     }# end sub_m == "retire"      
       
-      #     #8 Sub-Model move_to_SNF====
+      #     #8 Sub-Model SNF_admission====
       # 
-      if(sub_m == "move_to_SNF"){
+      if(sub_m == "SNF_admission"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         
         medicare_move <- alive_table[symptoms != "Y" & population == "community" & age >= 65, which = TRUE] #finds individuals eligible to move
         
-        needs_to_move <- alive_table[medicare_move][baseline_medicare_lambda*exp(medicare_age_beta*age + 5.25*ifelse(state_PAH != "A" & state_PAH != "P",1,0)) > runif(length(medicare_move)), which = TRUE] #finds individuals who need to move this timestep
+        needs_to_move <- alive_table[medicare_move][baseline_medicare_lambda*exp(medicare_age_beta*age + 5.25*ifelse(state_RAH != "A" & state_RAH != "R",1,0)) > runif(length(medicare_move)), which = TRUE] #finds individuals who need to move this timestep
         
         if(length(needs_to_move) > 0){
         
@@ -1297,11 +1297,11 @@ ABM_SNFdynamics_func <- function(
         if(verbose == 2){
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}
         
-      }}# end sub_m == "move_to_SNF"
+      }}# end sub_m == "SNF_admission"
       
-      #     #9 Sub-Model leave_SNF====
+      #     #9 Sub-Model SNF_discharge====
       # 
-      if(sub_m == "leave_SNF"){
+      if(sub_m == "SNF_discharge"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         # Individuals leaving SNF
@@ -1345,13 +1345,13 @@ ABM_SNFdynamics_func <- function(
           print(paste0(length(leaving_SNF), " people returned to the community from SNF this timestep"))
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}
         
-      } # end sub_m == "leave_SNF"
+      } # end sub_m == "SNF_discharge"
       #
       #`**************************************************************************`
       #
-      #     #10 Sub-Model get_vaccinated====
+      #     #10 Sub-Model vaccination====
       # 
-      if(sub_m == "get_vaccinated"){
+      if(sub_m == "vaccination"){
         
         if(verbose == 2){print(paste0("Sub Model ", sub_m, " iteration ", tick, " beginning."))}
         num_infected <- nrow(alive_table[state_SIRV == "I"])
@@ -1405,7 +1405,7 @@ ABM_SNFdynamics_func <- function(
         if(verbose == 2){
           print(paste0(alive_table[time_of_last_vaccine == 0, .N], " people vaccinated this timestep. Of these ", alive_table[time_of_last_vaccine == 0 & n_doses_vaccine > 1, .N], " received dose 2 or higher"))
           print(paste0("Sub Model ", sub_m, " iteration ", tick, " completed."))}
-      }# end sub_m == "get_vaccinated"
+      }# end sub_m == "vaccination"
       
     } # end of sub models ====   
     
