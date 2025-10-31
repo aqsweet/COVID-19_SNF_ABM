@@ -153,19 +153,19 @@ get_SDoH_mod <- function(nSDoH, mortality_AFT_hazard_betas) {
   }}
   return(SDoH_mod)
 } #modifications to mortality based on social determinants of health
-get_state_mod <- function(state_SIRV, state_PAH, mortality_AFT_hazard_betas) {
+get_state_mod <- function(state_SIRV, state_RAH, mortality_AFT_hazard_betas) {
   I_mod <- unname(mortality_AFT_hazard_betas["beta_I"]) * (state_SIRV == "I")
-  H_mod <- unname(mortality_AFT_hazard_betas["beta_H"]) * grepl("H", state_PAH)
-  A_mod <- unname(mortality_AFT_hazard_betas["beta_A"]) * (state_PAH == "A")
+  H_mod <- unname(mortality_AFT_hazard_betas["beta_H"]) * grepl("H", state_RAH)
+  A_mod <- unname(mortality_AFT_hazard_betas["beta_A"]) * (state_RAH == "A")
   return(I_mod + H_mod + A_mod)
-} #modifications to mortality based on SIRV and PAH state
+} #modifications to mortality based on SIRV and RAH state
 
 ## Hospitalization Modifiers ====  
 
 get_state_mod_hosp <- function(state_SIRV, hospitalization_AFT_hazard_betas) {
   I_mod <- unname(hospitalization_AFT_hazard_betas["beta_I"]) * (state_SIRV == "I")
   return(I_mod)
-} #modifications to mortality based on SIRV and PAH state
+} #modifications to mortality based on SIRV and RAH state
 get_age_mod_hosp <- function(age, hospitalization_AFT_hazard_betas) { unname(hospitalization_AFT_hazard_betas["beta_age"]) * age} #modifications to mortality based on SDoH
 get_SDoH_mod_hosp <- function(nSDoH, hospitalization_AFT_hazard_betas) {
   num_SDoH <- nSDoH
